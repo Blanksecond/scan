@@ -1,0 +1,723 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#01060d">
+<title>Face Scan</title>
+<style>
+  :root {
+    --bg: #01060d;
+    --cyan: #5fd4ff;
+    --cyan-dim: #2a7fa8;
+    --text: #bfe9ff;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); overflow: hidden;
+    font-family: var(--mono); -webkit-user-select: none; user-select: none; }
+  [hidden] { display: none !important; }
+
+  #gl { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+
+  /* ---------- стартовый экран ---------- */
+  #intro { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 28px; padding: 24px; text-align: center; z-index: 5; transition: opacity .6s; }
+  #intro.out { opacity: 0; pointer-events: none; }
+  .ring { width: 150px; height: 150px; border-radius: 50%; position: relative;
+    border: 1px solid rgba(95,212,255,.25); box-shadow: 0 0 40px rgba(95,212,255,.15) inset; }
+  .ring::before, .ring::after { content: ""; position: absolute; inset: 10px; border-radius: 50%;
+    border: 2px solid transparent; border-top-color: var(--cyan); animation: spin 2.4s linear infinite; }
+  .ring::after { inset: 26px; border-top-color: transparent; border-bottom-color: var(--cyan-dim); animation-duration: 3.6s; animation-direction: reverse; }
+  .ring span { position: absolute; inset: 0; display: grid; place-items: center; font-size: 11px; letter-spacing: 3px; color: var(--cyan); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  h1 { margin: 0; font-size: 20px; font-weight: 500; letter-spacing: 8px; color: #e6f7ff; text-shadow: 0 0 18px rgba(95,212,255,.6); }
+  .sub { font-size: 12px; letter-spacing: 1px; color: #6aa9c9; line-height: 1.7; max-width: 300px; }
+  button.main { font: inherit; font-size: 13px; letter-spacing: 4px; color: #e6f7ff; background: rgba(95,212,255,.08);
+    border: 1px solid var(--cyan); padding: 15px 34px; border-radius: 2px; cursor: pointer;
+    box-shadow: 0 0 22px rgba(95,212,255,.25); animation: glow 2.2s ease-in-out infinite; }
+  button.main:active { background: rgba(95,212,255,.25); }
+  button.main:disabled { opacity: .5; animation: none; }
+  @keyframes glow { 50% { box-shadow: 0 0 36px rgba(95,212,255,.55); } }
+  .err { color: #ff8fa3; font-size: 12px; line-height: 1.6; max-width: 300px; }
+
+  /* ---------- экран сканирования ---------- */
+  #scan { position: fixed; inset: 0; z-index: 4; transition: opacity .5s; }
+  #scan.out { opacity: 0; }
+  #video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1);
+    filter: grayscale(1) contrast(1.15) brightness(.55) sepia(1) hue-rotate(160deg) saturate(2.6); }
+  #overlay { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .hud { position: absolute; font-size: 10px; line-height: 1.6; letter-spacing: 1px; color: #7cc8ea; text-shadow: 0 0 6px rgba(95,212,255,.6); }
+  #hudTL { top: calc(16px + env(safe-area-inset-top)); left: 16px; }
+  #hudTR { top: calc(16px + env(safe-area-inset-top)); right: 16px; text-align: right; }
+  #instr { position: absolute; left: 0; right: 0; bottom: calc(118px + env(safe-area-inset-bottom)); text-align: center;
+    font-size: 15px; letter-spacing: 2px; color: #e6f7ff; text-shadow: 0 0 14px rgba(95,212,255,.9); padding: 0 20px; }
+  #progWrap { position: absolute; left: 32px; right: 32px; bottom: calc(64px + env(safe-area-inset-bottom)); }
+  #progBar { height: 2px; background: rgba(95,212,255,.15); position: relative; overflow: hidden; }
+  #progFill { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--cyan); box-shadow: 0 0 12px var(--cyan); transition: width .2s; }
+  #progTxt { display: flex; justify-content: space-between; margin-top: 8px; font-size: 10px; letter-spacing: 2px; color: #7cc8ea; }
+
+  #flash { position: fixed; inset: 0; background: #dff6ff; opacity: 0; pointer-events: none; z-index: 10; transition: opacity 1.2s ease-out; }
+  #flash.on { opacity: 1; transition: opacity .05s; }
+
+  /* ---------- экран голограммы ---------- */
+  #holoHud { position: fixed; left: 0; right: 0; bottom: calc(22px + env(safe-area-inset-bottom)); z-index: 3;
+    display: flex; flex-direction: column; align-items: center; gap: 14px; opacity: 0; transition: opacity 1.5s; pointer-events: none; }
+  #holoHud.on { opacity: 1; pointer-events: auto; }
+  #stats { font-size: 10px; letter-spacing: 2px; color: #6aa9c9; text-align: center; line-height: 1.7; }
+  .row { display: flex; gap: 10px; }
+  button.small { font: inherit; font-size: 10px; letter-spacing: 2px; color: #bfe9ff; background: rgba(1,6,13,.6);
+    border: 1px solid rgba(95,212,255,.4); padding: 10px 16px; border-radius: 2px; cursor: pointer; }
+  button.small:active { background: rgba(95,212,255,.2); }
+</style>
+</head>
+<body>
+
+<canvas id="gl"></canvas>
+
+<div id="intro">
+  <div class="ring"><span>SCAN</span></div>
+  <h1>FACE//SCAN</h1>
+  <div class="sub">Создание голографической модели по лицу.<br>Нужен хороший свет и около 15 секунд.<br>Изображение обрабатывается только на этом устройстве и никуда не отправляется.</div>
+  <button class="main" id="startBtn">НАЧАТЬ</button>
+  <div class="err" id="err" hidden></div>
+</div>
+
+<div id="scan" hidden>
+  <video id="video" playsinline muted autoplay></video>
+  <canvas id="overlay"></canvas>
+  <div class="hud" id="hudTL"></div>
+  <div class="hud" id="hudTR"></div>
+  <div id="instr"></div>
+  <div id="progWrap">
+    <div id="progBar"><div id="progFill"></div></div>
+    <div id="progTxt"><span id="progLabel">ИНИЦИАЛИЗАЦИЯ</span><span id="progPct">0%</span></div>
+  </div>
+</div>
+
+<div id="flash"></div>
+
+<div id="holoHud">
+  <div id="stats"></div>
+  <div class="row">
+    <button class="small" id="saveBtn">СОХРАНИТЬ</button>
+    <button class="small" id="againBtn">ЗАНОВО</button>
+  </div>
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from "three";
+import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
+import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
+import { FilesetResolver, FaceLandmarker, ImageSegmenter }
+  from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+
+const $ = id => document.getElementById(id);
+const params = new URLSearchParams(location.search);
+const DEBUG_IMG = params.get("img");          // ?img=test/portrait.jpg — проверка без камеры
+
+// ============================================================
+//  Модели MediaPipe
+// ============================================================
+let fileset, landmarker, segmenter;
+
+async function create(Cls, opts) {
+  try { return await Cls.createFromOptions(fileset, { ...opts, baseOptions: { ...opts.baseOptions, delegate: "GPU" } }); }
+  catch (e) { return await Cls.createFromOptions(fileset, { ...opts, baseOptions: { ...opts.baseOptions, delegate: "CPU" } }); }
+}
+async function loadLandmarker(mode) {
+  fileset ??= await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
+  landmarker = await create(FaceLandmarker, {
+    baseOptions: { modelAssetPath: "models/face_landmarker.task" },
+    runningMode: mode, numFaces: 1,
+  });
+}
+async function loadSegmenter() {
+  fileset ??= await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
+  segmenter = await create(ImageSegmenter, {
+    baseOptions: { modelAssetPath: "models/selfie_multiclass.tflite" },
+    runningMode: "IMAGE", outputCategoryMask: true, outputConfidenceMasks: false,
+  });
+}
+
+// ============================================================
+//  Сканирование
+// ============================================================
+const video = $("video"), overlay = $("overlay"), octx = overlay.getContext("2d");
+const TESS = FaceLandmarker.FACE_LANDMARKS_TESSELATION;
+const OVAL = FaceLandmarker.FACE_LANDMARKS_FACE_OVAL;
+
+const scan = {
+  phase: "find", progress: 0, side: 0, holdT: 0,
+  best: null, bestYaw: 9, lastLm: null, segPromise: null,
+};
+
+function yawOf(lm) {        // ~0 — смотрит прямо, знак — в какую сторону повернул
+  const n = lm[1], l = lm[234], r = lm[454];
+  const dl = Math.hypot(n.x - l.x, n.y - l.y), dr = Math.hypot(n.x - r.x, n.y - r.y);
+  return (dl - dr) / (dl + dr);
+}
+
+function captureFrame(lm) {
+  const c = document.createElement("canvas");
+  c.width = video.videoWidth; c.height = video.videoHeight;
+  c.getContext("2d").drawImage(video, 0, 0);
+  return { canvas: c, lm: lm.map(p => ({ x: p.x, y: p.y, z: p.z })) };
+}
+
+async function startScan() {
+  $("startBtn").disabled = true;
+  $("startBtn").textContent = "ЗАГРУЗКА…";
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 1280 } }, audio: false,
+    });
+    video.srcObject = stream;
+    await video.play();
+  } catch (e) {
+    return fail("Нет доступа к камере. Разреши доступ к камере для этого сайта и попробуй ещё раз.");
+  }
+  try {
+    scan.segPromise = loadSegmenter();          // большая модель грузится, пока идёт сканирование
+    await loadLandmarker("VIDEO");
+  } catch (e) {
+    console.error(e);
+    return fail("Не удалось загрузить модель распознавания. Проверь интернет и обнови страницу.");
+  }
+  $("intro").classList.add("out");
+  $("scan").hidden = false;
+  resizeOverlay();
+  scan.t0 = performance.now();
+  requestAnimationFrame(scanLoop);
+}
+
+function fail(msg) {
+  $("err").textContent = msg; $("err").hidden = false;
+  $("startBtn").disabled = false; $("startBtn").textContent = "НАЧАТЬ";
+}
+
+function resizeOverlay() {
+  const d = Math.min(devicePixelRatio, 2);
+  overlay.width = innerWidth * d; overlay.height = innerHeight * d;
+  octx.setTransform(d, 0, 0, d, 0, 0);
+}
+
+// нормализованные координаты кадра → экран (кадр растянут cover и отзеркален)
+function mapper() {
+  const vw = video.videoWidth, vh = video.videoHeight, W = innerWidth, H = innerHeight;
+  const s = Math.max(W / vw, H / vh), dx = (W - vw * s) / 2, dy = (H - vh * s) / 2;
+  return p => [W - (dx + p.x * vw * s), dy + p.y * vh * s];
+}
+
+let lastVideoTime = -1, prevNow = 0;
+function scanLoop(now) {
+  if (scan.phase === "done") return;
+  const dt = Math.min(0.1, (now - (prevNow || now)) / 1000); prevNow = now;
+  let lm = null;
+  if (video.currentTime !== lastVideoTime && video.readyState >= 2) {
+    lastVideoTime = video.currentTime;
+    const res = landmarker.detectForVideo(video, now);
+    lm = res.faceLandmarks?.[0] || null;
+    scan.lastLm = lm;
+  } else lm = scan.lastLm;
+
+  stepScan(lm, dt);
+  drawOverlay(lm, now / 1000);
+  requestAnimationFrame(scanLoop);
+}
+
+const instr = t => { if ($("instr").textContent !== t) $("instr").textContent = t; };
+
+function stepScan(lm, dt) {
+  const s = scan;
+  if (!lm) {
+    instr("ПОМЕСТИ ЛИЦО В КАДР");
+    $("progLabel").textContent = "ПОИСК ЛИЦА";
+    return setProgress(s.progress);
+  }
+  const yaw = yawOf(lm);
+  if (s.phase === "find") s.phase = "front";
+
+  if (s.phase === "front") {
+    instr("СМОТРИ ПРЯМО В КАМЕРУ");
+    $("progLabel").textContent = "КАРТА ЛИЦА";
+    if (Math.abs(yaw) < 0.12) {
+      s.progress = Math.min(35, s.progress + dt * 14);
+      if (Math.abs(yaw) < s.bestYaw || !s.best) { s.best = captureFrame(lm); s.bestYaw = Math.abs(yaw); }
+      if (s.progress >= 35) s.phase = "side1";
+    }
+  } else if (s.phase === "side1") {
+    instr("МЕДЛЕННО ПОВЕРНИ ГОЛОВУ В СТОРОНУ");
+    $("progLabel").textContent = "ПРОФИЛЬ";
+    s.progress = Math.min(60, s.progress + dt * 4);
+    if (Math.abs(yaw) > 0.3) { s.side = Math.sign(yaw); s.progress = 62; s.phase = "side2"; }
+  } else if (s.phase === "side2") {
+    instr("ТЕПЕРЬ В ДРУГУЮ СТОРОНУ");
+    $("progLabel").textContent = "ПРОФИЛЬ";
+    s.progress = Math.min(84, s.progress + dt * 4);
+    if (yaw * s.side < -0.3) { s.progress = 86; s.phase = "center"; }
+  } else if (s.phase === "center") {
+    instr("И СНОВА ПРЯМО");
+    $("progLabel").textContent = "КАЛИБРОВКА";
+    if (Math.abs(yaw) < 0.12) {
+      s.progress = Math.min(100, s.progress + dt * 12);
+      if (Math.abs(yaw) < s.bestYaw) { s.best = captureFrame(lm); s.bestYaw = Math.abs(yaw); }
+      if (s.progress >= 100) finishScan();
+    }
+  }
+  setProgress(s.progress);
+}
+
+function setProgress(p) {
+  $("progFill").style.width = p + "%";
+  $("progPct").textContent = Math.floor(p) + "%";
+}
+
+function drawOverlay(lm, t) {
+  const W = innerWidth, H = innerHeight;
+  octx.clearRect(0, 0, W, H);
+  // лёгкие линии развёртки
+  octx.fillStyle = "rgba(95,212,255,.035)";
+  for (let y = (t * 40) % 4; y < H; y += 4) octx.fillRect(0, y, W, 1);
+
+  const hex = () => Math.floor(Math.random() * 0xffffff).toString(16).toUpperCase().padStart(6, "0");
+  if (Math.floor(t * 8) !== scan.hudTick) {
+    scan.hudTick = Math.floor(t * 8);
+    $("hudTL").innerHTML = `SCAN.SYS v2.4<br>TRK ${lm ? "LOCK" : "----"}<br>PTS ${lm ? 478 : 0}<br>0x${hex()}<br>0x${hex()}`;
+    $("hudTR").innerHTML = lm
+      ? `YAW ${(yawOf(lm) * 90).toFixed(1)}°<br>DEPTH ${(-lm[1].z * 100).toFixed(2)}<br>MESH 2556<br>${hex()}`
+      : `YAW --<br>DEPTH --<br>MESH --<br>${hex()}`;
+  }
+
+  if (!lm) {      // рамка-подсказка
+    octx.strokeStyle = "rgba(95,212,255,.5)"; octx.setLineDash([6, 8]); octx.lineWidth = 1.5;
+    octx.beginPath(); octx.ellipse(W / 2, H * 0.43, Math.min(W * 0.32, 160), Math.min(W * 0.42, 210), 0, 0, Math.PI * 2); octx.stroke();
+    octx.setLineDash([]);
+    return;
+  }
+  const map = mapper();
+  const P = lm.map(map);
+  let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+  for (const [x, y] of P) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+
+  // сетка лица
+  octx.strokeStyle = "rgba(95,212,255,.28)"; octx.lineWidth = 0.6;
+  octx.beginPath();
+  for (const e of TESS) { const a = P[e.start], b = P[e.end]; octx.moveTo(a[0], a[1]); octx.lineTo(b[0], b[1]); }
+  octx.stroke();
+  // контур
+  octx.strokeStyle = "rgba(140,225,255,.8)"; octx.lineWidth = 1.4; octx.beginPath();
+  for (const e of OVAL) { const a = P[e.start], b = P[e.end]; octx.moveTo(a[0], a[1]); octx.lineTo(b[0], b[1]); }
+  octx.stroke();
+  // точки
+  octx.fillStyle = "rgba(200,240,255,.9)";
+  for (let i = 0; i < P.length; i += 3) octx.fillRect(P[i][0] - 0.8, P[i][1] - 0.8, 1.6, 1.6);
+
+  // сканирующая линия
+  const h = y1 - y0, sy = y0 - h * 0.1 + ((t * 0.7) % 1) * h * 1.2;
+  const g = octx.createLinearGradient(0, sy - 30, 0, sy + 2);
+  g.addColorStop(0, "rgba(95,212,255,0)"); g.addColorStop(1, "rgba(95,212,255,.35)");
+  octx.fillStyle = g; octx.fillRect(x0 - 20, sy - 30, x1 - x0 + 40, 32);
+  octx.fillStyle = "rgba(200,245,255,.9)"; octx.fillRect(x0 - 20, sy, x1 - x0 + 40, 1.5);
+
+  // уголки рамки
+  const m = 18, L = 18;
+  octx.strokeStyle = "rgba(95,212,255,.9)"; octx.lineWidth = 2;
+  for (const [cx, cy, sx, sy2] of [[x0 - m, y0 - m, 1, 1], [x1 + m, y0 - m, -1, 1], [x0 - m, y1 + m, 1, -1], [x1 + m, y1 + m, -1, -1]]) {
+    octx.beginPath(); octx.moveTo(cx, cy + sy2 * L); octx.lineTo(cx, cy); octx.lineTo(cx + sx * L, cy); octx.stroke();
+  }
+}
+
+async function finishScan() {
+  scan.phase = "done";
+  instr("ПОСТРОЕНИЕ МОДЕЛИ…");
+  $("progLabel").textContent = "ОБРАБОТКА";
+  try {
+    await scan.segPromise;
+    const data = analyse(scan.best.canvas, scan.best.lm);
+    video.srcObject?.getTracks().forEach(t => t.stop());
+    $("flash").classList.add("on");
+    setTimeout(() => {
+      $("scan").hidden = true;
+      buildHologram(data);
+      $("flash").classList.remove("on");
+    }, 120);
+  } catch (e) {
+    console.error(e);
+    instr("ОШИБКА ОБРАБОТКИ. ОБНОВИ СТРАНИЦУ");
+  }
+}
+
+// ============================================================
+//  Анализ кадра → облако точек
+//  классы сегментации: 0 фон, 1 волосы, 2 кожа тела, 3 кожа лица, 4 одежда, 5 прочее
+// ============================================================
+function analyse(canvas, lm) {
+  const cw = canvas.width, ch = canvas.height;
+  const seg = segmenter.segment(canvas);
+  const mask = seg.categoryMask;
+  const mw = mask.width, mh = mask.height, cls = mask.getAsUint8Array().slice();
+  mask.close?.(); seg.close?.();
+  const pix = canvas.getContext("2d").getImageData(0, 0, cw, ch).data;
+
+  // габариты лица в пикселях
+  let fx0 = 1e9, fx1 = -1e9, fy0 = 1e9, fy1 = -1e9;
+  for (const p of lm) { fx0 = Math.min(fx0, p.x * cw); fx1 = Math.max(fx1, p.x * cw); fy0 = Math.min(fy0, p.y * ch); fy1 = Math.max(fy1, p.y * ch); }
+  const Fw = fx1 - fx0, fcx = (fx0 + fx1) / 2, fcy = (fy0 + fy1) / 2;
+
+  // мир: единица = ширина лица, x отзеркален (как в селфи), y вверх, z к зрителю
+  const toX = px => -(px - fcx) / Fw, toY = py => -(py - fcy) / Fw;
+  const LM = lm.map(p => [toX(p.x * cw), toY(p.y * ch), -(p.z * cw) / Fw]);
+
+  // область интереса
+  const rx0 = Math.max(0, fx0 - Fw * 1.0), rx1 = Math.min(cw, fx1 + Fw * 1.0);
+  const ry0 = Math.max(0, fy0 - Fw * 1.0), ry1 = Math.min(ch, fy1 + Fw * 1.25);
+  const step = Math.max(1, (rx1 - rx0) / 230);
+  const gw = Math.ceil((rx1 - rx0) / step), gh = Math.ceil((ry1 - ry0) / step);
+
+  const classAt = (px, py) => cls[Math.min(mh - 1, Math.floor(py * mh / ch)) * mw + Math.min(mw - 1, Math.floor(px * mw / cw))];
+  const lumAt = (px, py) => {
+    const i = (Math.floor(py) * cw + Math.floor(px)) * 4;
+    return (0.299 * pix[i] + 0.587 * pix[i + 1] + 0.114 * pix[i + 2]) / 255;
+  };
+
+  // сетка классов и две карты расстояний до края силуэта (голова и всё тело)
+  const G = new Uint8Array(gw * gh);
+  for (let j = 0; j < gh; j++) for (let i = 0; i < gw; i++) G[j * gw + i] = classAt(rx0 + (i + 0.5) * step, ry0 + (j + 0.5) * step);
+  const headDT = distance(G, gw, gh, c => c === 1 || c === 2 || c === 3 || c === 5);
+  const bodyDT = distance(G, gw, gh, c => c >= 1);
+
+  // контраст по яркости лица
+  const faceL = [];
+  for (let k = 0; k < G.length; k += 3) if (G[k] === 3) faceL.push(lumAt(rx0 + (k % gw + 0.5) * step, ry0 + (Math.floor(k / gw) + 0.5) * step));
+  faceL.sort((a, b) => a - b);
+  const lo = faceL[Math.floor(faceL.length * 0.04)] ?? 0.2, hi = faceL[Math.floor(faceL.length * 0.97)] ?? 0.8;
+  const contrast = l => Math.min(1, Math.max(0, (l - lo) / Math.max(0.05, hi - lo)));
+
+  // глубина лица — взвешенно по ближайшим ключевым точкам
+  const faceDepth = (X, Y) => {
+    let ws = 0, zs = 0, best = 1e9, bz = 0;
+    for (const p of LM) {
+      const d2 = (p[0] - X) ** 2 + (p[1] - Y) ** 2;
+      if (d2 < best) { best = d2; bz = p[2]; }
+      if (d2 < 0.012) { const w = 1 / (d2 + 1e-4); ws += w; zs += w * p[2]; }
+    }
+    const z = ws ? zs / ws : bz;
+    return z - Math.max(0, Math.sqrt(best) - 0.06) * 1.2;   // за пределами сетки (уши) уходит назад
+  };
+
+  const inflate = (dCells, D, R) => { const u = Math.min(1, dCells * step / Fw / D); return R * Math.sqrt(1 - (1 - u) ** 2); };
+  const CZ = -0.55;                 // центр головы за плоскостью лица
+
+  const pts = [];   // [x,y,z,bright,kind]  kind: 0 лицо, 1 волосы, 2 шея, 3 одежда
+  const add = (x, y, z, b, k) => pts.push(x, y, z, b, k);
+  for (let j = 0; j < gh; j++) for (let i = 0; i < gw; i++) {
+    const c = G[j * gw + i];
+    if (!c) continue;
+    const reps = 1;
+    for (let r = 0; r < reps; r++) {
+      const px = rx0 + (i + Math.random()) * step, py = ry0 + (j + Math.random()) * step;
+      const X = toX(px), Y = toY(py), b = contrast(lumAt(px, py));
+      const hd = headDT[j * gw + i], bd = bodyDT[j * gw + i];
+      if (c === 3) {
+        add(X, Y, faceDepth(X, Y), b, 0);
+      } else if (c === 1 || c === 5) {
+        const inf = inflate(hd, 0.45, 0.62);
+        add(X, Y, CZ + inf, 0.35 + b * 0.9, 1);
+        if (Math.random() < 0.7) add(X, Y, CZ - inf * 0.95, 0.15 + b * 0.6, 1);
+      } else if (c === 2) {
+        const inf = inflate(hd, 0.3, 0.42);
+        add(X, Y, CZ + 0.12 + inf, b, 2);
+        if (Math.random() < 0.5) add(X, Y, CZ + 0.12 - inf, b * 0.6, 2);
+      } else if (c === 4 && Math.random() < 0.55) {
+        const inf = inflate(bd, 0.6, 0.55);
+        const fade = 1 - Math.min(1, Math.max(0, (py - fy1) / (Fw * 1.25)));
+        add(X, Y, CZ + 0.1 + inf, (0.15 + b * 0.5) * fade, 3);
+      }
+    }
+  }
+  return { pts: new Float32Array(pts), LM };
+}
+
+// двухпроходная фаска-дистанция до края маски (в клетках)
+function distance(G, w, h, inside) {
+  const D = new Float32Array(w * h);
+  for (let k = 0; k < D.length; k++) D[k] = inside(G[k]) ? 1e6 : 0;
+  const r2 = Math.SQRT2;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const k = y * w + x; if (!D[k]) continue;
+    let v = D[k];
+    v = Math.min(v, x > 0 ? D[k - 1] + 1 : 1, y > 0 ? D[k - w] + 1 : 1,
+                 x > 0 && y > 0 ? D[k - w - 1] + r2 : r2, x < w - 1 && y > 0 ? D[k - w + 1] + r2 : r2);
+    D[k] = v;
+  }
+  for (let y = h - 1; y >= 0; y--) for (let x = w - 1; x >= 0; x--) {
+    const k = y * w + x; if (!D[k]) continue;
+    let v = D[k];
+    v = Math.min(v, x < w - 1 ? D[k + 1] + 1 : 1, y < h - 1 ? D[k + w] + 1 : 1,
+                 x < w - 1 && y < h - 1 ? D[k + w + 1] + r2 : r2, x > 0 && y < h - 1 ? D[k + w - 1] + r2 : r2);
+    D[k] = v;
+  }
+  return D;
+}
+
+// ============================================================
+//  Голограмма (three.js)
+// ============================================================
+let renderer, scene, camera, composer, head, clock, mats = [];
+const view = { yaw: 0, pitch: 0, tYaw: 0, tPitch: 0, drag: null, idleT: 0 };
+
+const pointVS = `
+  attribute vec3 aStart; attribute float aDelay; attribute float aBright; attribute float aSize; attribute float aSeed;
+  uniform float uTime; uniform float uPR; uniform float uSweep;
+  varying float vA; varying float vB;
+  void main() {
+    float t = clamp((uTime - aDelay) / 1.6, 0.0, 1.0);
+    t = 1.0 - pow(1.0 - t, 3.0);
+    vec3 p = mix(aStart, position, t);
+    p += 0.004 * vec3(sin(uTime * 1.3 + aSeed * 40.0), cos(uTime * 1.1 + aSeed * 31.0), 0.0) * t;
+    vec4 mv = modelViewMatrix * vec4(p, 1.0);
+    gl_Position = projectionMatrix * mv;
+    float tw = 0.7 + 0.3 * sin(uTime * (1.5 + aSeed * 3.0) + aSeed * 60.0);
+    float sweep = smoothstep(0.12, 0.0, abs(position.y - uSweep)) * 1.6;
+    vA = tw * (0.25 + 0.75 * t) + sweep * t;
+    vB = aBright;
+    gl_PointSize = aSize * uPR * (6.0 / -mv.z) * (1.0 + sweep * 0.6);
+  }`;
+const pointFS = `
+  uniform vec3 uColor; varying float vA; varying float vB;
+  void main() {
+    float d = length(gl_PointCoord - 0.5);
+    float a = smoothstep(0.5, 0.0, d);
+    vec3 c = mix(uColor * 0.55, vec3(0.85, 0.97, 1.0), vB * vB);
+    gl_FragColor = vec4(c * (0.1 + 0.6 * vB), a * vA * 0.55);
+  }`;
+
+function initGL() {
+  if (renderer) return;
+  renderer = new THREE.WebGLRenderer({ canvas: $("gl"), antialias: false, preserveDrawingBuffer: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.setClearColor(0x000000, 1);
+  scene = new THREE.Scene();
+  camera = new THREE.PerspectiveCamera(32, innerWidth / innerHeight, 0.1, 100);
+  composer = new EffectComposer(renderer);
+  composer.addPass(new RenderPass(scene, camera));
+  composer.addPass(new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.75, 0.4, 0.12));
+  composer.addPass(new OutputPass());
+  clock = new THREE.Clock();
+  bindDrag();
+  addRain();
+  renderer.setAnimationLoop(render);
+}
+
+function buildHologram({ pts, LM }) {
+  initGL();
+  if (head) { scene.remove(head); head.traverse(o => { o.geometry?.dispose(); o.material?.dispose(); }); }
+  mats = mats.filter(m => m.userData.rain);
+  head = new THREE.Group();
+  scene.add(head);
+  const t0 = clock.getElapsedTime();
+
+  // --- облако точек ---
+  const n = pts.length / 5;
+  const pos = new Float32Array(n * 3), start = new Float32Array(n * 3), delay = new Float32Array(n),
+        bright = new Float32Array(n), size = new Float32Array(n), seed = new Float32Array(n);
+  let minY = 1e9, maxY = -1e9;
+  for (let i = 0; i < n; i++) { const y = pts[i * 5 + 1]; minY = Math.min(minY, y); maxY = Math.max(maxY, y); }
+  for (let i = 0; i < n; i++) {
+    const x = pts[i * 5], y = pts[i * 5 + 1], z = pts[i * 5 + 2], b = pts[i * 5 + 3], k = pts[i * 5 + 4];
+    pos.set([x, y, z], i * 3);
+    const a = Math.random() * Math.PI * 2, r = 3 + Math.random() * 4;
+    start.set([x + Math.cos(a) * r, y + (Math.random() - 0.5) * 6, z + Math.sin(a) * r], i * 3);
+    delay[i] = t0 + 0.3 + (maxY - y) / (maxY - minY) * 2.2 + Math.random() * 0.6;
+    bright[i] = k === 0 ? 0.15 + b * 0.85 : b;
+    size[i] = (k === 0 ? 1.5 : 1.8) * (0.6 + Math.random() * 0.8);
+    seed[i] = Math.random();
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute("aStart", new THREE.BufferAttribute(start, 3));
+  geo.setAttribute("aDelay", new THREE.BufferAttribute(delay, 1));
+  geo.setAttribute("aBright", new THREE.BufferAttribute(bright, 1));
+  geo.setAttribute("aSize", new THREE.BufferAttribute(size, 1));
+  geo.setAttribute("aSeed", new THREE.BufferAttribute(seed, 1));
+  const pmat = new THREE.ShaderMaterial({
+    vertexShader: pointVS, fragmentShader: pointFS, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    uniforms: { uTime: { value: 0 }, uPR: { value: renderer.getPixelRatio() }, uSweep: { value: 99 }, uColor: { value: new THREE.Color(0x3fb8ff) } },
+  });
+  mats.push(pmat);
+  head.add(new THREE.Points(geo, pmat));
+
+  // --- сетка лица ---
+  const lpos = [];
+  for (const e of TESS) lpos.push(...LM[e.start], ...LM[e.end]);
+  const lgeo = new THREE.BufferGeometry();
+  lgeo.setAttribute("position", new THREE.Float32BufferAttribute(lpos, 3));
+  const lmat = new THREE.LineBasicMaterial({ color: 0x4cc6ff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+  lmat.userData.fadeAt = t0 + 3.2; lmat.userData.max = 0.22;
+  head.add(new THREE.LineSegments(lgeo, lmat));
+
+  // --- «нейросеть» из связей между точками ---
+  const cell = 0.22, hash = new Map(), key = (x, y, z) => `${Math.floor(x / cell)},${Math.floor(y / cell)},${Math.floor(z / cell)}`;
+  for (let i = 0; i < n; i++) {
+    if (pts[i * 5 + 4] === 3) continue;
+    const kk = key(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]);
+    (hash.get(kk) || hash.set(kk, []).get(kk)).push(i);
+  }
+  const web = [];
+  for (let m = 0; m < 2200; m++) {
+    const i = Math.floor(Math.random() * n);
+    if (pts[i * 5 + 4] === 3) continue;
+    const bucket = hash.get(key(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]));
+    if (!bucket) continue;
+    const j = bucket[Math.floor(Math.random() * bucket.length)];
+    const d = Math.hypot(pos[i * 3] - pos[j * 3], pos[i * 3 + 1] - pos[j * 3 + 1], pos[i * 3 + 2] - pos[j * 3 + 2]);
+    if (d < 0.06 || d > 0.2) continue;
+    web.push(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2], pos[j * 3], pos[j * 3 + 1], pos[j * 3 + 2]);
+  }
+  const wgeo = new THREE.BufferGeometry();
+  wgeo.setAttribute("position", new THREE.Float32BufferAttribute(web, 3));
+  const wmat = new THREE.LineBasicMaterial({ color: 0x2f9fe0, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+  wmat.userData.fadeAt = t0 + 3.8; wmat.userData.max = 0.16;
+  head.add(new THREE.LineSegments(wgeo, wmat));
+  mats.push(lmat, wmat);
+
+  // кадрирование
+  const cy = (minY + maxY) / 2 + 0.15;
+  head.position.y = -cy;
+  const hgt = (maxY - minY) * 1.18;
+  const fitH = hgt / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)));
+  const fitW = (3.4) / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.aspect);
+  camera.position.set(0, 0, Math.max(fitH, fitW) + 0.6);
+  camera.lookAt(0, 0, 0);
+  head.userData = { t0, minY, maxY };
+  view.yaw = view.tYaw = -0.9; view.pitch = view.tPitch = 0; view.idleT = 0;
+
+  $("stats").innerHTML = `МОДЕЛЬ ПОСТРОЕНА<br>${n.toLocaleString("ru-RU")} ТОЧЕК · 478 ОПОРНЫХ`;
+  setTimeout(() => $("holoHud").classList.add("on"), 4200);
+}
+
+function addRain() {
+  const N = 1400, pos = new Float32Array(N * 3), start = new Float32Array(N * 3), d = new Float32Array(N),
+        b = new Float32Array(N), s = new Float32Array(N), seed = new Float32Array(N);
+  for (let i = 0; i < N; i++) {
+    const col = Math.floor(Math.random() * 40);
+    pos.set([(col / 40 - 0.5) * 7, Math.random() * 8 - 4, -1.5 - Math.random() * 2], i * 3);
+    b[i] = Math.random() * 0.4; s[i] = 1 + Math.random(); seed[i] = Math.random();
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute("aStart", new THREE.BufferAttribute(start, 3));
+  geo.setAttribute("aDelay", new THREE.BufferAttribute(d, 1));
+  geo.setAttribute("aBright", new THREE.BufferAttribute(b, 1));
+  geo.setAttribute("aSize", new THREE.BufferAttribute(s, 1));
+  geo.setAttribute("aSeed", new THREE.BufferAttribute(seed, 1));
+  const mat = new THREE.ShaderMaterial({
+    vertexShader: `
+      attribute float aBright; attribute float aSize; attribute float aSeed;
+      uniform float uTime; uniform float uPR; varying float vA; varying float vB;
+      void main() {
+        vec3 p = position;
+        p.y = mod(p.y - uTime * (0.25 + aSeed * 0.5) + 4.0, 8.0) - 4.0;
+        vec4 mv = modelViewMatrix * vec4(p, 1.0);
+        gl_Position = projectionMatrix * mv;
+        vA = 0.35 * smoothstep(4.0, 2.0, abs(p.y)) * min(1.0, uTime * 0.3); vB = aBright;
+        gl_PointSize = aSize * uPR * (6.0 / -mv.z);
+      }`,
+    fragmentShader: pointFS, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    uniforms: { uTime: { value: 0 }, uPR: { value: renderer.getPixelRatio() }, uColor: { value: new THREE.Color(0x1f78c0) } },
+  });
+  mat.userData.rain = true;
+  mats.push(mat);
+  scene.add(new THREE.Points(geo, mat));
+}
+
+function bindDrag() {
+  const el = $("gl");
+  el.addEventListener("pointerdown", e => { view.drag = { x: e.clientX, y: e.clientY, yaw: view.tYaw, pitch: view.tPitch }; el.setPointerCapture(e.pointerId); });
+  el.addEventListener("pointermove", e => {
+    if (!view.drag) return;
+    view.tYaw = THREE.MathUtils.clamp(view.drag.yaw + (e.clientX - view.drag.x) / innerWidth * 3, -1.1, 1.1);
+    view.tPitch = THREE.MathUtils.clamp(view.drag.pitch + (e.clientY - view.drag.y) / innerHeight * 1.5, -0.35, 0.35);
+    view.idleT = 0;
+  });
+  const up = () => { view.drag = null; };
+  el.addEventListener("pointerup", up); el.addEventListener("pointercancel", up);
+}
+
+function render() {
+  const t = clock.getElapsedTime(), dt = Math.min(0.05, t - (render.last ?? t)); render.last = t;
+  if (head) {
+    const { t0, minY, maxY } = head.userData;
+    view.idleT += dt;
+    if (!view.drag && view.idleT > 2.5) {               // сам медленно поворачивается
+      const k = t - t0;
+      view.tYaw = Math.sin(k * 0.35) * 0.75 * Math.min(1, k / 4);
+      view.tPitch = Math.sin(k * 0.23) * 0.08;
+    }
+    view.yaw += (view.tYaw - view.yaw) * 0.06;
+    view.pitch += (view.tPitch - view.pitch) * 0.06;
+    head.rotation.set(view.pitch, view.yaw, 0);
+    const sweepPeriod = 5;
+    const sp = ((t - t0 - 3) % sweepPeriod) / sweepPeriod;
+    for (const m of mats) {
+      m.uniforms && (m.uniforms.uTime.value = t);
+      if (m.uniforms?.uSweep) m.uniforms.uSweep.value = t - t0 > 3 && sp < 0.6 ? maxY - (sp / 0.6) * (maxY - minY + 0.4) : 99;
+      if (m.userData.fadeAt) m.opacity = m.userData.max * Math.min(1, Math.max(0, (t - m.userData.fadeAt) / 2));
+    }
+  } else for (const m of mats) m.uniforms && (m.uniforms.uTime.value = t);
+  composer.render();
+}
+
+addEventListener("resize", () => {
+  if (!$("scan").hidden) resizeOverlay();
+  if (!renderer) return;
+  renderer.setSize(innerWidth, innerHeight);
+  composer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+});
+
+// ============================================================
+//  Кнопки
+// ============================================================
+$("startBtn").addEventListener("click", () => DEBUG_IMG ? debugRun() : startScan());
+
+$("againBtn").addEventListener("click", () => location.reload());
+
+$("saveBtn").addEventListener("click", () => {
+  composer.render();
+  renderer.domElement.toBlob(async blob => {
+    const file = new File([blob], "hologram.png", { type: "image/png" });
+    if (navigator.canShare?.({ files: [file] })) {
+      try { await navigator.share({ files: [file] }); return; } catch (e) { if (e.name === "AbortError") return; }
+    }
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = "hologram.png"; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  });
+});
+
+async function debugRun() {
+  $("startBtn").disabled = true; $("startBtn").textContent = "ЗАГРУЗКА…";
+  const img = new Image(); img.src = DEBUG_IMG; await img.decode();
+  const c = document.createElement("canvas"); c.width = img.naturalWidth; c.height = img.naturalHeight;
+  c.getContext("2d").drawImage(img, 0, 0);
+  await Promise.all([loadLandmarker("IMAGE"), loadSegmenter()]);
+  const lm = landmarker.detect(c).faceLandmarks?.[0];
+  if (!lm) return fail("Лицо на тестовом изображении не найдено.");
+  $("intro").classList.add("out");
+  buildHologram(analyse(c, lm));
+}
+</script>
+</body>
+</html>
