@@ -18,7 +18,7 @@
     font-family: var(--mono); -webkit-user-select: none; user-select: none; }
   [hidden] { display: none !important; }
 
-  #gl { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  #gl { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; height: 100dvh; display: block; touch-action: none; }
 
   /* ---------- стартовый экран ---------- */
   #intro { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -96,6 +96,7 @@
 </div>
 
 <div id="flash"></div>
+<div id="debugInfo" style="position:fixed;top:calc(4px + env(safe-area-inset-top));left:4px;z-index:20;font-size:10px;color:#ff0"></div>
 
 <div id="holoHud">
   <div id="stats"></div>
@@ -118,7 +119,8 @@ import { FilesetResolver, FaceLandmarker, ImageSegmenter }
 
 const $ = id => document.getElementById(id);
 const params = new URLSearchParams(location.search);
-const DEBUG_IMG = params.get("img");          // ?img=test/portrait.jpg — проверка без камеры
+const DEBUG_IMG = params.get("img");
+const DEBUG = params.has("debug");          // ?img=test/portrait.jpg — проверка без камеры
 
 // ============================================================
 //  Модели MediaPipe
@@ -340,9 +342,11 @@ async function finishScan() {
     await scan.segPromise;
     const data = analyse(scan.best.canvas, scan.best.lm);
     video.srcObject?.getTracks().forEach(t => t.stop());
+    video.srcObject = null;
+    try { landmarker.close(); segmenter.close(); } catch (e) {}   // освобождаем GPU для голограммы
     $("flash").classList.add("on");
     setTimeout(() => {
-      $("scan").hidden = true;
+      $("scan").remove(); $("intro").remove();
       buildHologram(data);
       $("flash").classList.remove("on");
     }, 120);
@@ -499,9 +503,9 @@ const pointFS = `
 
 function initGL() {
   if (renderer) return;
-  renderer = new THREE.WebGLRenderer({ canvas: $("gl"), antialias: false, preserveDrawingBuffer: true });
+  renderer = new THREE.WebGLRenderer({ canvas: $("gl"), antialias: false, powerPreference: "high-performance" });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-  renderer.setSize(innerWidth, innerHeight);
+  fitCanvas(true);
   renderer.setClearColor(0x000000, 1);
   scene = new THREE.Scene();
   camera = new THREE.PerspectiveCamera(32, innerWidth / innerHeight, 0.1, 100);
@@ -661,7 +665,19 @@ function bindDrag() {
   el.addEventListener("pointerup", up); el.addEventListener("pointercancel", up);
 }
 
+// размер холста берём из реального размера элемента на экране (в Safari innerHeight «плавает» из-за панелей)
+function fitCanvas(force) {
+  const el = renderer.domElement, w = el.clientWidth || innerWidth, h = el.clientHeight || innerHeight;
+  if (!force && w === fitCanvas.w && h === fitCanvas.h) return;
+  fitCanvas.w = w; fitCanvas.h = h;
+  renderer.setSize(w, h, false);
+  if (camera) { camera.aspect = w / h; camera.updateProjectionMatrix(); }
+}
+
 function render() {
+  fitCanvas();
+  if (DEBUG) { const el = renderer.domElement, b = renderer.getDrawingBufferSize(new THREE.Vector2());
+    $("debugInfo").textContent = `css ${el.clientWidth}x${el.clientHeight} buf ${b.x}x${b.y} win ${innerWidth}x${innerHeight} dpr ${devicePixelRatio}`; }
   const t = clock.getElapsedTime(), dt = Math.min(0.05, t - (render.last ?? t)); render.last = t;
   if (head) {
     const { t0, minY, maxY } = head.userData;
@@ -686,11 +702,9 @@ function render() {
 }
 
 addEventListener("resize", () => {
-  if (!$("scan").hidden) resizeOverlay();
+  if ($("scan") && !$("scan").hidden) resizeOverlay();
   if (!renderer) return;
-  renderer.setSize(innerWidth, innerHeight);
-  camera.aspect = innerWidth / innerHeight;
-  camera.updateProjectionMatrix();
+  fitCanvas();
 });
 
 // ============================================================
@@ -702,7 +716,8 @@ $("againBtn").addEventListener("click", () => location.reload());
 
 $("saveBtn").addEventListener("click", () => {
   renderer.render(scene, camera);
-  renderer.domElement.toBlob(async blob => {
+  const url = renderer.domElement.toDataURL("image/png");      // сразу после render — буфер ещё не очищен
+  fetch(url).then(r => r.blob()).then(async blob => {
     const file = new File([blob], "hologram.png", { type: "image/png" });
     if (navigator.canShare?.({ files: [file] })) {
       try { await navigator.share({ files: [file] }); return; } catch (e) { if (e.name === "AbortError") return; }
@@ -721,7 +736,7 @@ async function debugRun() {
   await Promise.all([loadLandmarker("IMAGE"), loadSegmenter()]);
   const lm = landmarker.detect(c).faceLandmarks?.[0];
   if (!lm) return fail("Лицо на тестовом изображении не найдено.");
-  $("intro").classList.add("out");
+  $("intro").remove();
   buildHologram(analyse(c, lm));
 }
 </script>
